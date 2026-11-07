@@ -74,8 +74,8 @@ static int fzf_v2_key(const char *pattern, const char *str) {
   return rofi_scorer_fzf_v2_sort_key(score, str);
 }
 
-/** Copy of fzf_v2_sort() from view.c, which is static there. */
-static int test_fzf_v2_sort(const void *p1, const void *p2, void *arg) {
+/** Copy of input_order_sort() from view.c, which is static there. */
+static int test_input_order_sort(const void *p1, const void *p2, void *arg) {
   const unsigned int *a = p1;
   const unsigned int *b = p2;
   int *distances = arg;
@@ -347,7 +347,40 @@ int main(int argc, char **argv) {
                                            g_utf8_strlen(lines[i], -1), 0),
                scores[i]);
     }
-    g_qsort_with_data(order, n, sizeof(unsigned int), test_fzf_v2_sort, keys);
+    g_qsort_with_data(order, n, sizeof(unsigned int), test_input_order_sort, keys);
+    for (unsigned int i = 0; i < n; i++) {
+      TASSERTL((int)order[i], expected[i]);
+    }
+  }
+
+  /**
+   * prefix sorting: entries that start with the input first, each group in
+   * input order.
+   */
+  {
+    TASSERTL(rofi_scorer_prefix_evaluate("stea", 4, "steam", 0), 0);
+    TASSERTL(rofi_scorer_prefix_evaluate("stea", 4, "pkill -f steam", 0), 1);
+    TASSERTL(rofi_scorer_prefix_evaluate("STEA", 4, "steam", 0), 0);
+    TASSERTL(rofi_scorer_prefix_evaluate("STEA", 4, "steam", 1), 1);
+    TASSERTL(rofi_scorer_prefix_evaluate("steam", 5, "stea", 0), 1);
+    TASSERTL(rofi_scorer_prefix_evaluate("", 0, "steam", 0), 0);
+    TASSERTL(rofi_scorer_prefix_evaluate("ÉT", 2, "été", 0), 0);
+
+    const char *lines[] = {"pkill -f steam", "steam-run foo", "foo-steam",
+                           "Steam", "steamcmd"};
+    const int expected[] = {1, 3, 4, 0, 2};
+    const unsigned int n = G_N_ELEMENTS(lines);
+    unsigned int order[G_N_ELEMENTS(lines)];
+    int keys[G_N_ELEMENTS(lines)];
+
+    for (unsigned int i = 0; i < n; i++) {
+      /* Reversed, so the groups only keep their input order if the
+       * comparison really falls back to it. */
+      order[i] = n - 1 - i;
+      keys[i] = rofi_scorer_prefix_evaluate("stea", 4, lines[i], 0);
+    }
+    g_qsort_with_data(order, n, sizeof(unsigned int), test_input_order_sort,
+                      keys);
     for (unsigned int i = 0; i < n; i++) {
       TASSERTL((int)order[i], expected[i]);
     }

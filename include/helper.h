@@ -311,6 +311,20 @@ int rofi_scorer_fzf_v2_evaluate(const char *pattern, glong plen,
  * @returns the sort key (lower is better).
  */
 int rofi_scorer_fzf_v2_sort_key(int score, const char *str);
+
+/**
+ * @param pattern The input to look for.
+ * @param plen    The length of the pattern, in characters.
+ * @param str     The string to score.
+ * @param case_sensitive Whether case is significant.
+ *
+ * Scores whether `str` starts with `pattern`. The scores tie within the two
+ * groups, leaving the caller to order each group by input position.
+ *
+ * @returns 0 if `str` starts with `pattern`, 1 otherwise (lower is better).
+ */
+int rofi_scorer_prefix_evaluate(const char *pattern, glong plen,
+                                const char *str, int case_sensitive);
 /*@}*/
 
 /**

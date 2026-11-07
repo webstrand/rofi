@@ -682,11 +682,13 @@ int config_sanity_check(void) {
       config.sorting_method_enum = SORT_FZF;
     } else if (g_strcmp0(config.sorting_method, "fzf-v2") == 0) {
       config.sorting_method_enum = SORT_FZF_V2;
+    } else if (g_strcmp0(config.sorting_method, "prefix") == 0) {
+      config.sorting_method_enum = SORT_PREFIX;
     } else {
       g_string_append_printf(
           msg,
           "\t<b>config.sorting_method</b>=%s is not a valid sorting "
-          "strategy.\nValid options are: normal, fzf or fzf-v2.\n",
+          "strategy.\nValid options are: normal, fzf, fzf-v2 or prefix.\n",
           config.sorting_method);
       found_error = 1;
     }
@@ -1385,6 +1387,27 @@ int rofi_scorer_fzf_v2_sort_key(int score, const char *str) {
   guint32 by_score = G_MAXUINT16 - rofi_scorer_fzf_v2_as_uint16(score);
   guint32 by_length = MIN(rofi_scorer_fzf_v2_trim_length(str), 0x7FFF);
   return (int)((by_score << 15) | by_length);
+}
+
+int rofi_scorer_prefix_evaluate(const char *pattern, glong plen,
+                                const char *str, int case_sensitive) {
+  for (glong i = 0; i < plen; i++) {
+    gunichar pc = g_utf8_get_char(pattern);
+    gunichar sc = g_utf8_get_char(str);
+    if (sc == 0) {
+      return 1;
+    }
+    if (!case_sensitive) {
+      pc = g_unichar_tolower(pc);
+      sc = g_unichar_tolower(sc);
+    }
+    if (pc != sc) {
+      return 1;
+    }
+    pattern = g_utf8_next_char(pattern);
+    str = g_utf8_next_char(str);
+  }
+  return 0;
 }
 
 /**

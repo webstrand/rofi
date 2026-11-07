@@ -115,13 +115,14 @@ static int lev_sort(const void *p1, const void *p2, void *arg) {
 }
 
 /**
- * fzf-v2 sorting: by key, then by input position, which is what fzf compares
- * last (compareRanks in src/result_others.go). The sort cannot be relied on
- * for that, being stable only from glib 2.82. Kept out of lev_sort() so the
- * other methods resolve their ties as before. The values sorted are indices
- * into the unfiltered list, hence already the input positions.
+ * Sorting by key, then by input position: for fzf-v2, which is what fzf
+ * compares last (compareRanks in src/result_others.go), and for prefix, whose
+ * keys tie within each group. The sort cannot be relied on for that, being
+ * stable only from glib 2.82. Kept out of lev_sort() so the other methods
+ * resolve their ties as before. The values sorted are indices into the
+ * unfiltered list, hence already the input positions.
  */
-static int fzf_v2_sort(const void *p1, const void *p2, void *arg) {
+static int input_order_sort(const void *p1, const void *p2, void *arg) {
   const unsigned int *a = p1;
   const unsigned int *b = p2;
   int *distances = arg;
@@ -515,6 +516,10 @@ static void filter_elements(thread_state *ts,
           t->state->distance[i] = rofi_scorer_fzf_v2_sort_key(score, str);
           break;
         }
+        case SORT_PREFIX:
+          t->state->distance[i] = rofi_scorer_prefix_evaluate(
+              t->pattern, t->plen, str, t->state->case_sensitive);
+          break;
         case SORT_NORMAL:
         default:
           t->state->distance[i] = levenshtein(t->pattern, t->plen, str, slen,
@@ -893,8 +898,9 @@ static gboolean rofi_view_refilter_real(RofiViewState *state) {
       j += states[i].count;
     }
     if (config.sort) {
-      if (config.sorting_method_enum == SORT_FZF_V2) {
-        g_qsort_with_data(state->line_map, j, sizeof(int), fzf_v2_sort,
+      if (config.sorting_method_enum == SORT_FZF_V2 ||
+          config.sorting_method_enum == SORT_PREFIX) {
+        g_qsort_with_data(state->line_map, j, sizeof(int), input_order_sort,
                           state->distance);
       } else {
         g_qsort_with_data(state->line_map, j, sizeof(int), lev_sort,

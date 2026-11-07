@@ -512,7 +512,7 @@ This setting can be changed at runtime (see `-kb-toggle-sort`).
 
 `-sorting-method` 'method' to specify the sort method.
 
-There are 3 methods:
+There are 4 methods:
 
 - **levenshtein** (Default)
 - **fzf** a fuzzy scorer loosely inspired by fzf.
@@ -525,6 +525,9 @@ There are 3 methods:
   default tie-breaking.
   When `-normalize-match` is enabled, scoring is done on the normalized
   (accent-stripped) text, mirroring fzf's rune normalization.
+- **prefix** entries that start with the input first, then the rest. Each
+  group keeps the order of the input, so a list ordered by recency stays
+  ordered by recency.
 
 ### Layout and Theming
 
