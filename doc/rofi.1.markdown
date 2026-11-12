@@ -267,7 +267,9 @@ including row options and `\0key\x1fvalue` header lines.
 
 Picking a row (or entering custom input) writes it to fd *OUT*, or stdout when
 no *OUT* is given, using `-format` (default `s`, see **rofi-dmenu(5)**). In
-addition, `t` prints the name of the mode the row came from. rofi then exits
+addition, `t` prints the name of the mode the row came from, and `I` the row's
+`info` row option (nothing for custom input or rows without one), so a row can
+carry an identifier that is not its visible text. rofi then exits
 with code 0; `-kb-custom-N` exits with code `10+N` when the input enabled
 `use-hot-keys`, and cancelling exits with code 1 without output. *OUT* is
 closed after writing, so a reader can wait for end-of-file.

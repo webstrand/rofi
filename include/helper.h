@@ -466,14 +466,17 @@ void rofi_output_formatted_line(const char *format, const char *string,
  * @param selected_line The selected line index.
  * @param filter The entered filter.
  * @param tab The name of the mode the entry was picked from, or NULL.
+ * @param info The picked row's info, or NULL.
  *
  * Like rofi_output_formatted_line, but writes to out, and when tab is not
  * NULL also supports:
  *   * t: Print the mode (tab) name.
+ *   * I: Print the row's info (empty for custom input or rows without it).
  */
 void rofi_output_formatted_line_to(FILE *out, const char *format,
                                    const char *string, int selected_line,
-                                   const char *filter, const char *tab);
+                                   const char *filter, const char *tab,
+                                   const char *info);
 
 /**
  * @param string The string with elements to be replaced

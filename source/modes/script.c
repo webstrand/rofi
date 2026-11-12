@@ -515,7 +515,7 @@ static void script_mode_destroy(Mode *sw) {
  * Unlike a script, the input is never waited on: rows are appended as they
  * arrive on fd N, so the window shows immediately even when the producer is
  * slow. Picking a row prints it (see -format, which also accepts `t` for the
- * mode name) to fd M or stdout and exits rofi.
+ * mode name and `I` for the row's info) to fd M or stdout and exits rofi.
  */
 
 /** Stop reading: drop the watch, restore the fd's flags and close it. */
@@ -653,7 +653,7 @@ static int script_fd_mode_init(Mode *sw) {
 }
 
 static void script_fd_output(Mode *sw, const char *string, int index,
-                             const char *filter) {
+                             const char *filter, const char *info) {
   ScriptFdSource *src = (ScriptFdSource *)sw->ed;
   const char *format = "s";
   find_arg_str("-format", (char **)&format);
@@ -670,7 +670,8 @@ static void script_fd_output(Mode *sw, const char *string, int index,
   // The reader may already be gone; report that as a write error, not a
   // crash. rofi exits right after this, so nothing inherits the setting.
   signal(SIGPIPE, SIG_IGN);
-  rofi_output_formatted_line_to(out, format, string, index, filter, sw->name);
+  rofi_output_formatted_line_to(out, format, string, index, filter, sw->name,
+                                info);
   if (src->out_fd >= 0) {
     // Close so a reader waiting for EOF finishes.
     if (fclose(out) != 0) {
@@ -694,9 +695,9 @@ static ModeMode script_fd_mode_result(Mode *sw, int mretv, char **input,
     }
     if (have_row) {
       script_fd_output(sw, pd->cmd_list[selected_line].entry, selected_line,
-                       filter);
+                       filter, pd->cmd_list[selected_line].info);
     } else if (!pd->no_custom && *input != NULL) {
-      script_fd_output(sw, *input, -1, filter);
+      script_fd_output(sw, *input, -1, filter, NULL);
     } else {
       return RELOAD_DIALOG;
     }
@@ -708,7 +709,7 @@ static ModeMode script_fd_mode_result(Mode *sw, int mretv, char **input,
       return RELOAD_DIALOG;
     }
     script_fd_output(sw, pd->cmd_list[selected_line].entry, selected_line,
-                     filter);
+                     filter, pd->cmd_list[selected_line].info);
     rofi_set_return_code(EXIT_SUCCESS);
     return MODE_EXIT;
   }
@@ -716,7 +717,7 @@ static ModeMode script_fd_mode_result(Mode *sw, int mretv, char **input,
     if (pd->no_custom) {
       return RELOAD_DIALOG;
     }
-    script_fd_output(sw, *input, -1, filter);
+    script_fd_output(sw, *input, -1, filter, NULL);
     rofi_set_return_code(EXIT_SUCCESS);
     return MODE_EXIT;
   }

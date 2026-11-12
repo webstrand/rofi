@@ -1708,12 +1708,13 @@ int parse_case_sensitivity(const char *input) {
 void rofi_output_formatted_line(const char *format, const char *string,
                                 int selected_line, const char *filter) {
   rofi_output_formatted_line_to(stdout, format, string, selected_line, filter,
-                                NULL);
+                                NULL, NULL);
 }
 
 void rofi_output_formatted_line_to(FILE *out, const char *format,
                                    const char *string, int selected_line,
-                                   const char *filter, const char *tab) {
+                                   const char *filter, const char *tab,
+                                   const char *info) {
   for (int i = 0; format && format[i]; i++) {
     if (format[i] == 'i') {
       fprintf(out, "%d", selected_line);
@@ -1746,6 +1747,11 @@ void rofi_output_formatted_line_to(FILE *out, const char *format,
       }
     } else if (format[i] == 't' && tab != NULL) {
       fputs(tab, out);
+    } else if (format[i] == 'I' && tab != NULL) {
+      // A row without info (or custom input) prints nothing.
+      if (info != NULL) {
+        fputs(info, out);
+      }
     } else {
       fputc(format[i], out);
     }
