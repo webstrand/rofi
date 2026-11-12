@@ -37,6 +37,9 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <glib-unix.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,7 +84,26 @@ typedef struct {
   gboolean use_hot_keys;
 
   int switch_mode;
+
+  /** fd source: allocated size of cmd_list. */
+  size_t cmd_list_capacity;
+  /** fd source: main loop watch on the input fd, 0 when done. */
+  guint in_source;
+  /** fd source: input received but not yet terminated by delim. */
+  GString *pending;
+  /** fd source: file status flags of the input fd before we changed them. */
+  int in_flags;
 } ScriptModePrivateData;
+
+/**
+ * Configuration of a `name:<N[>M]` mode, stored in Mode::ed.
+ * Rows are read from fd N as they arrive; the pick is printed to fd M
+ * (stdout if absent) and rofi exits.
+ */
+typedef struct {
+  int in_fd;
+  int out_fd;
+} ScriptFdSource;
 
 /**
  * Shared function between DMENU and Script mode.
@@ -194,6 +216,70 @@ static void parse_header_entry(Mode *sw, char *line, ssize_t length) {
   }
 }
 
+/**
+ * Parse one delimited line of script output and append it to the list.
+ *
+ * @param buffer the line; must have a '\0' at buffer[read_length - 1] or be
+ *               '\0' terminated at buffer[read_length] (the delimiter, if
+ *               present, is replaced by '\0').
+ * @param read_length length of the line including its delimiter.
+ *
+ * The list is kept with a zeroed slot past the last entry.
+ *
+ * @returns FALSE if the list could not be grown.
+ */
+static gboolean script_mode_add_line(Mode *sw, DmenuScriptEntry **list,
+                                     unsigned int *length, size_t *capacity,
+                                     char *buffer, ssize_t read_length) {
+  ScriptModePrivateData *pd = (ScriptModePrivateData *)sw->private_data;
+  // Filter out line-end.
+  if (buffer[read_length - 1] == pd->delim) {
+    buffer[read_length - 1] = '\0';
+  }
+  if (buffer[0] == '\0') {
+    parse_header_entry(sw, &buffer[1], read_length - 1);
+    return TRUE;
+  }
+  if (*capacity < ((*length) + 2)) {
+    *capacity += 256;
+    // Check if it returns NULL, if it does, break out and show what we
+    // have so far.
+    DmenuScriptEntry *retvn =
+        g_realloc(*list, (*capacity) * sizeof(DmenuScriptEntry));
+    if (retvn == NULL) {
+      return FALSE;
+    }
+    *list = retvn;
+  }
+  DmenuScriptEntry *retv = *list;
+  size_t buf_length = strlen(buffer);
+  retv[(*length)].entry = rofi_force_utf8(buffer, buf_length);
+  retv[(*length)].icon_name = NULL;
+  retv[(*length)].display = NULL;
+  retv[(*length)].meta = NULL;
+  retv[(*length)].info = NULL;
+  retv[(*length)].active = FALSE;
+  retv[(*length)].urgent = FALSE;
+  retv[(*length)].icon_fetch_uid = 0;
+  retv[(*length)].icon_fetch_size = 0;
+  retv[(*length)].icon_fetch_scale = 0;
+  /* The memset below only clears the next slot, leaving the
+   * first entry uninitialized. */
+  retv[(*length)].icon_fallback_index = 0;
+  retv[(*length)].nonselectable = FALSE;
+  retv[(*length)].permanent = FALSE;
+
+  // Skip the '\0'
+  buf_length++;
+  if (buf_length > 0 && (read_length > (ssize_t)buf_length)) {
+    dmenuscript_parse_entry_extras(sw, &(retv[(*length)]), buffer + buf_length,
+                                   read_length - buf_length);
+  }
+  memset(&(retv[(*length) + 1]), 0, sizeof(DmenuScriptEntry));
+  (*length)++;
+  return TRUE;
+}
+
 static DmenuScriptEntry *execute_executor(Mode *sw, char *arg,
                                           unsigned int *length, int value,
                                           DmenuScriptEntry *entry,
@@ -257,52 +343,9 @@ static DmenuScriptEntry *execute_executor(Mode *sw, char *arg,
       size_t actual_size = 0;
       while ((read_length = getdelim(&buffer, &buffer_length, pd->delim, inp)) >
              0) {
-        // Filter out line-end.
-        if (buffer[read_length - 1] == pd->delim) {
-          buffer[read_length - 1] = '\0';
-        }
-        if (buffer[0] == '\0') {
-          parse_header_entry(sw, &buffer[1], read_length - 1);
-        } else {
-          if (actual_size < ((*length) + 2)) {
-            actual_size += 256;
-            // Check if it returns NULL, if it does, break out and show what we
-            // have so far.
-            DmenuScriptEntry *retvn =
-                g_realloc(retv, (actual_size) * sizeof(DmenuScriptEntry));
-            if (retvn == NULL) {
-              break;
-            }
-            retv = retvn;
-          }
-          if (retv) {
-            size_t buf_length = strlen(buffer);
-            retv[(*length)].entry = rofi_force_utf8(buffer, buf_length);
-            retv[(*length)].icon_name = NULL;
-            retv[(*length)].display = NULL;
-            retv[(*length)].meta = NULL;
-            retv[(*length)].info = NULL;
-            retv[(*length)].active = FALSE;
-            retv[(*length)].urgent = FALSE;
-            retv[(*length)].icon_fetch_uid = 0;
-            retv[(*length)].icon_fetch_size = 0;
-            retv[(*length)].icon_fetch_scale = 0;
-            /* The memset below only clears the next slot, leaving the
-             * first entry uninitialized. */
-            retv[(*length)].icon_fallback_index = 0;
-            retv[(*length)].nonselectable = FALSE;
-            retv[(*length)].permanent = FALSE;
-
-            // Skip the '\0'
-            buf_length++;
-            if (buf_length > 0 && (read_length > (ssize_t)buf_length)) {
-              dmenuscript_parse_entry_extras(sw, &(retv[(*length)]),
-                                             buffer + buf_length,
-                                             read_length - buf_length);
-            }
-            memset(&(retv[(*length) + 1]), 0, sizeof(DmenuScriptEntry));
-            (*length)++;
-          }
+        if (!script_mode_add_line(sw, &retv, length, &actual_size, buffer,
+                                  read_length)) {
+          break;
         }
       }
       if (buffer) {
@@ -465,6 +508,237 @@ static void script_mode_destroy(Mode *sw) {
     sw->private_data = NULL;
   }
 }
+
+/**
+ * fd source modes (`name:<N[>M]`).
+ *
+ * Unlike a script, the input is never waited on: rows are appended as they
+ * arrive on fd N, so the window shows immediately even when the producer is
+ * slow. Picking a row prints it (see -format, which also accepts `t` for the
+ * mode name) to fd M or stdout and exits rofi.
+ */
+
+/** Stop reading: drop the watch, restore the fd's flags and close it. */
+static void script_fd_close_input(Mode *sw) {
+  ScriptModePrivateData *pd = (ScriptModePrivateData *)sw->private_data;
+  ScriptFdSource *src = (ScriptFdSource *)sw->ed;
+  if (pd->in_source > 0) {
+    g_source_remove(pd->in_source);
+    pd->in_source = 0;
+  }
+  if (src->in_fd >= 0) {
+    // O_NONBLOCK is shared with whoever else holds this file description
+    // (e.g. the invoking shell's terminal), so put it back.
+    fcntl(src->in_fd, F_SETFL, pd->in_flags);
+    close(src->in_fd);
+    src->in_fd = -1;
+  }
+}
+
+static gboolean script_fd_read_cb(gint fd, G_GNUC_UNUSED GIOCondition cond,
+                                  gpointer user_data) {
+  Mode *sw = (Mode *)user_data;
+  ScriptModePrivateData *pd = (ScriptModePrivateData *)sw->private_data;
+  gboolean eof = FALSE;
+  char buf[65536];
+
+  // Bounded so a fast producer can't starve the UI.
+  for (int i = 0; i < 16; i++) {
+    ssize_t n = read(fd, buf, sizeof(buf));
+    if (n > 0) {
+      g_string_append_len(pd->pending, buf, n);
+    } else if (n == 0) {
+      eof = TRUE;
+      break;
+    } else if (errno == EINTR) {
+      continue;
+    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      break;
+    } else {
+      g_warning("Mode '%s': failed to read input: %s", sw->name,
+                g_strerror(errno));
+      eof = TRUE;
+      break;
+    }
+  }
+
+  unsigned int old_length = pd->cmd_list_length;
+  gsize start = 0;
+  while (start < pd->pending->len) {
+    // Re-read the delimiter each line: a header may change it.
+    char *line = pd->pending->str + start;
+    char *end = memchr(line, pd->delim, pd->pending->len - start);
+    if (end == NULL) {
+      break;
+    }
+    gsize len = end - line;
+    script_mode_add_line(sw, &(pd->cmd_list), &(pd->cmd_list_length),
+                         &(pd->cmd_list_capacity), line, len + 1);
+    start += len + 1;
+  }
+  g_string_erase(pd->pending, 0, start);
+  if (eof && pd->pending->len > 0) {
+    // Unterminated last line; GString keeps a '\0' at str[len].
+    script_mode_add_line(sw, &(pd->cmd_list), &(pd->cmd_list_length),
+                         &(pd->cmd_list_capacity), pd->pending->str,
+                         pd->pending->len + 1);
+    g_string_truncate(pd->pending, 0);
+  }
+
+  // Headers (message, prompt, ...) can change the view too, so reload on
+  // any consumed input, not just new rows.
+  if (start > 0 || pd->cmd_list_length != old_length || eof) {
+    rofi_view_reload();
+  }
+  if (eof) {
+    // The watch is removed by returning G_SOURCE_REMOVE.
+    pd->in_source = 0;
+    script_fd_close_input(sw);
+    return G_SOURCE_REMOVE;
+  }
+  return G_SOURCE_CONTINUE;
+}
+
+/**
+ * @returns NULL if fd is open (and marks it close-on-exec), otherwise an
+ * error message for the mode's message bar.
+ */
+static char *script_fd_check(const Mode *sw, int fd, const char *what) {
+  int flags = fcntl(fd, F_GETFD);
+  if (flags == -1) {
+    g_warning("Mode '%s': %s fd %d is not open.", sw->name, what, fd);
+    return g_markup_printf_escaped(
+        "<b>%s</b>: %s fd %d is not open. Pass it from the shell, "
+        "e.g. <i>%d%s(command)</i>",
+        sw->name, what, fd, fd,
+        g_strcmp0(what, "input") == 0 ? "< <" : "> >");
+  }
+  // Don't leak our ends into programs other modes launch.
+  fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+  return NULL;
+}
+
+static int script_fd_mode_init(Mode *sw) {
+  if (sw->private_data != NULL) {
+    return TRUE;
+  }
+  ScriptFdSource *src = (ScriptFdSource *)sw->ed;
+  ScriptModePrivateData *pd = g_malloc0(sizeof(*pd));
+  pd->delim = '\n';
+  pd->switch_mode = -1;
+  pd->new_selection = -1;
+  pd->pending = g_string_new(NULL);
+  sw->private_data = (void *)pd;
+
+  // A bad fd only breaks this tab: show why there instead of refusing to
+  // start, so the other modes stay usable.
+  char *error = script_fd_check(sw, src->in_fd, "input");
+  if (error == NULL && src->out_fd >= 0) {
+    error = script_fd_check(sw, src->out_fd, "output");
+  }
+  if (error != NULL) {
+    pd->message = error;
+    // Nothing to pick, and custom input must not leak to stdout instead.
+    pd->no_custom = TRUE;
+    src->in_fd = -1;
+    src->out_fd = -1;
+    return TRUE;
+  }
+
+  pd->in_flags = fcntl(src->in_fd, F_GETFL);
+  fcntl(src->in_fd, F_SETFL, pd->in_flags | O_NONBLOCK);
+  pd->in_source = g_unix_fd_add(src->in_fd, G_IO_IN | G_IO_HUP | G_IO_ERR,
+                                script_fd_read_cb, sw);
+  return TRUE;
+}
+
+static void script_fd_output(Mode *sw, const char *string, int index,
+                             const char *filter) {
+  ScriptFdSource *src = (ScriptFdSource *)sw->ed;
+  const char *format = "s";
+  find_arg_str("-format", (char **)&format);
+
+  FILE *out = stdout;
+  if (src->out_fd >= 0) {
+    out = fdopen(src->out_fd, "w");
+    if (out == NULL) {
+      g_warning("Mode '%s': cannot open output fd %d: %s", sw->name,
+                src->out_fd, g_strerror(errno));
+      return;
+    }
+  }
+  // The reader may already be gone; report that as a write error, not a
+  // crash. rofi exits right after this, so nothing inherits the setting.
+  signal(SIGPIPE, SIG_IGN);
+  rofi_output_formatted_line_to(out, format, string, index, filter, sw->name);
+  if (src->out_fd >= 0) {
+    // Close so a reader waiting for EOF finishes.
+    if (fclose(out) != 0) {
+      g_warning("Mode '%s': failed to write output: %s", sw->name,
+                g_strerror(errno));
+    }
+    src->out_fd = -1;
+  }
+}
+
+static ModeMode script_fd_mode_result(Mode *sw, int mretv, char **input,
+                                      unsigned int selected_line) {
+  ScriptModePrivateData *pd = (ScriptModePrivateData *)sw->private_data;
+  gboolean have_row = selected_line < pd->cmd_list_length;
+  const char *filter = *input;
+
+  if (mretv & MENU_CUSTOM_COMMAND) {
+    if (!pd->use_hot_keys) {
+      // Same as script mode: kb-custom-N switches to mode N.
+      return (mretv & MENU_LOWER_MASK);
+    }
+    if (have_row) {
+      script_fd_output(sw, pd->cmd_list[selected_line].entry, selected_line,
+                       filter);
+    } else if (!pd->no_custom && *input != NULL) {
+      script_fd_output(sw, *input, -1, filter);
+    } else {
+      return RELOAD_DIALOG;
+    }
+    rofi_set_return_code(10 + (mretv & MENU_LOWER_MASK));
+    return MODE_EXIT;
+  }
+  if ((mretv & MENU_OK) && have_row) {
+    if (pd->cmd_list[selected_line].nonselectable) {
+      return RELOAD_DIALOG;
+    }
+    script_fd_output(sw, pd->cmd_list[selected_line].entry, selected_line,
+                     filter);
+    rofi_set_return_code(EXIT_SUCCESS);
+    return MODE_EXIT;
+  }
+  if ((mretv & MENU_CUSTOM_INPUT) && *input != NULL) {
+    if (pd->no_custom) {
+      return RELOAD_DIALOG;
+    }
+    script_fd_output(sw, *input, -1, filter);
+    rofi_set_return_code(EXIT_SUCCESS);
+    return MODE_EXIT;
+  }
+  if (mretv & MENU_CANCEL) {
+    // Like dmenu: nothing picked.
+    rofi_set_return_code(1);
+    return MODE_EXIT;
+  }
+  // Delete etc. have no meaning for a static list.
+  return RELOAD_DIALOG;
+}
+
+static void script_fd_mode_destroy(Mode *sw) {
+  ScriptModePrivateData *pd = (ScriptModePrivateData *)sw->private_data;
+  if (pd == NULL) {
+    return;
+  }
+  script_fd_close_input(sw);
+  g_string_free(pd->pending, TRUE);
+  script_mode_destroy(sw);
+}
+
 static inline unsigned int get_index(unsigned int length, int index) {
   if (index >= 0) {
     return index;
@@ -694,6 +968,45 @@ Mode *script_mode_parse_setup(const char *str) {
   unsigned int index = 0;
   const char *const sep = ":";
   char **tokens = g_strsplit(str, sep, 2);
+  if (tokens && g_strv_length(tokens) == 2 && tokens[1][0] == '<') {
+    // fd source: name:<N or name:<N>M
+    ScriptFdSource src = {.in_fd = -1, .out_fd = -1};
+    char *end = NULL;
+    gint64 in = g_ascii_strtoll(tokens[1] + 1, &end, 10);
+    gboolean ok = end != tokens[1] + 1 && in >= 0 && in <= INT_MAX;
+    src.in_fd = (int)in;
+    if (ok && *end == '>') {
+      char *out_start = end + 1;
+      gint64 out = g_ascii_strtoll(out_start, &end, 10);
+      ok = end != out_start && out >= 0 && out <= INT_MAX;
+      src.out_fd = (int)out;
+    }
+    if (!ok || *end != '\0') {
+      fprintf(stderr,
+              "The fd mode '%s' is invalid, expected <name>:<IN or "
+              "<name>:<IN>OUT with IN and OUT file descriptor numbers.\n",
+              str);
+      g_strfreev(tokens);
+      g_free(sw);
+      return NULL;
+    }
+    sw->name = g_strdup(tokens[0]);
+    sw->ed = g_memdup2(&src, sizeof(src));
+    g_strfreev(tokens);
+    sw->free = script_switcher_free;
+    sw->_init = script_fd_mode_init;
+    sw->_get_num_entries = script_mode_get_num_entries;
+    sw->_result = script_fd_mode_result;
+    sw->_destroy = script_fd_mode_destroy;
+    sw->_token_match = script_token_match;
+    sw->_get_message = script_get_message;
+    sw->_get_icon = script_get_icon;
+    sw->_get_completion = NULL;
+    sw->_preprocess_input = NULL;
+    sw->_get_display_value = _get_display_value;
+    sw->type = MODE_TYPE_SWITCHER;
+    return sw;
+  }
   if (tokens) {
     index = g_strv_length(tokens);
     sw->name = g_strdup(tokens[0]);

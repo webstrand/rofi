@@ -546,8 +546,11 @@ static void help_print_disabled_mode(const char *mode) {
 }
 static void help_print_mode_not_found(const char *mode) {
   GString *str = g_string_new("");
+  // Shown as markup; mode specs can contain '<' (fd modes).
+  char *esc = g_markup_escape_text(mode, -1);
   g_string_printf(
-      str, "Mode %s is not found.\nThe following modes are known:\n", mode);
+      str, "Mode %s is not found.\nThe following modes are known:\n", esc);
+  g_free(esc);
   for (unsigned int i = 0; i < num_available_modes; i++) {
     gboolean active = FALSE;
     for (unsigned int j = 0; j < num_modes; j++) {
@@ -556,8 +559,9 @@ static void help_print_mode_not_found(const char *mode) {
         break;
       }
     }
-    g_string_append_printf(str, "        * %s%s\n", active ? "+" : "",
-                           mode_get_name(available_modes[i]));
+    esc = g_markup_escape_text(mode_get_name(available_modes[i]), -1);
+    g_string_append_printf(str, "        * %s%s\n", active ? "+" : "", esc);
+    g_free(esc);
   }
   rofi_add_error_message(str);
 }

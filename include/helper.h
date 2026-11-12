@@ -29,6 +29,7 @@
 #define ROFI_HELPER_H
 #include "rofi-types.h"
 #include <cairo.h>
+#include <stdio.h>
 G_BEGIN_DECLS
 
 /**
@@ -457,6 +458,22 @@ int parse_case_sensitivity(const char *input);
  */
 void rofi_output_formatted_line(const char *format, const char *string,
                                 int selected_line, const char *filter);
+
+/**
+ * @param out The stream to write to.
+ * @param format The format string used. See rofi_output_formatted_line.
+ * @param string The selected entry.
+ * @param selected_line The selected line index.
+ * @param filter The entered filter.
+ * @param tab The name of the mode the entry was picked from, or NULL.
+ *
+ * Like rofi_output_formatted_line, but writes to out, and when tab is not
+ * NULL also supports:
+ *   * t: Print the mode (tab) name.
+ */
+void rofi_output_formatted_line_to(FILE *out, const char *format,
+                                   const char *string, int selected_line,
+                                   const char *filter, const char *tab);
 
 /**
  * @param string The string with elements to be replaced

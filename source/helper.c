@@ -1707,42 +1707,51 @@ int parse_case_sensitivity(const char *input) {
 
 void rofi_output_formatted_line(const char *format, const char *string,
                                 int selected_line, const char *filter) {
+  rofi_output_formatted_line_to(stdout, format, string, selected_line, filter,
+                                NULL);
+}
+
+void rofi_output_formatted_line_to(FILE *out, const char *format,
+                                   const char *string, int selected_line,
+                                   const char *filter, const char *tab) {
   for (int i = 0; format && format[i]; i++) {
     if (format[i] == 'i') {
-      fprintf(stdout, "%d", selected_line);
+      fprintf(out, "%d", selected_line);
     } else if (format[i] == 'd') {
-      fprintf(stdout, "%d", (selected_line + 1));
+      fprintf(out, "%d", (selected_line + 1));
     } else if (format[i] == 's') {
-      fputs(string, stdout);
+      fputs(string, out);
     } else if (format[i] == 'p') {
       char *esc = NULL;
       pango_parse_markup(string, -1, 0, NULL, &esc, NULL, NULL);
       if (esc) {
-        fputs(esc, stdout);
+        fputs(esc, out);
         g_free(esc);
       } else {
-        fputs("invalid string", stdout);
+        fputs("invalid string", out);
       }
     } else if (format[i] == 'q') {
       char *quote = g_shell_quote(string);
-      fputs(quote, stdout);
+      fputs(quote, out);
       g_free(quote);
     } else if (format[i] == 'f') {
       if (filter) {
-        fputs(filter, stdout);
+        fputs(filter, out);
       }
     } else if (format[i] == 'F') {
       if (filter) {
         char *quote = g_shell_quote(filter);
-        fputs(quote, stdout);
+        fputs(quote, out);
         g_free(quote);
       }
+    } else if (format[i] == 't' && tab != NULL) {
+      fputs(tab, out);
     } else {
-      fputc(format[i], stdout);
+      fputc(format[i], out);
     }
   }
-  fputc('\n', stdout);
-  fflush(stdout);
+  fputc('\n', out);
+  fflush(out);
 }
 
 static gboolean helper_eval_cb2(const GMatchInfo *info, GString *res,

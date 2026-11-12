@@ -252,6 +252,41 @@ exec command. For that case, `#` can be used as a separator.
     rofi -modes "My File Browser:fb.sh" -show "My File Browser"
 ```
 
+A mode can also read its rows from an already open file descriptor instead of
+running a script:
+
+```text
+<name>:<IN
+<name>:<IN>OUT
+```
+
+Unlike a script, rofi does not wait for the input: the window opens
+immediately and rows are added as they arrive on fd *IN*, so a slow producer
+never delays startup. Rows use the script format (see **rofi-script(5)**),
+including row options and `\0key\x1fvalue` header lines.
+
+Picking a row (or entering custom input) writes it to fd *OUT*, or stdout when
+no *OUT* is given, using `-format` (default `s`, see **rofi-dmenu(5)**). In
+addition, `t` prints the name of the mode the row came from. rofi then exits
+with code 0; `-kb-custom-N` exits with code `10+N` when the input enabled
+`use-hot-keys`, and cancelling exits with code 1 without output. *OUT* is
+closed after writing, so a reader can wait for end-of-file.
+
+Example: two slow sources next to `drun`, each routed to its own handler:
+
+```bash
+    rofi -show apps -modes "apps:<3>5,files:<4>6,drun" \
+        3< <(slow_apps) 4< <(slow_files) \
+        5> >(xargs -r launch_app) 6> >(xargs -r xdg-open)
+```
+
+Or a single output that names the source tab:
+
+```bash
+    rofi -show apps -modes "apps:<3,files:<4" -format 't\ts' \
+        3< <(slow_apps) 4< <(slow_files)
+```
+
 `-case-sensitive`
 
 Start in case-sensitive mode. This option can be changed at run-time using the
